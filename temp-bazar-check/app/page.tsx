@@ -13,84 +13,133 @@ type Product = {
   emoji: string;
 };
 
+const API_BASES = [
+  "https://api.api-store.workers.dev/api/bazardor",
+  "https://api.abcz.workers.dev/api/bazardor",
+];
+
 const demoProducts: Product[] = [
   { id: 1, name: "মিনিকেট চাল", category: "চাল", price: 72, unit: "কেজি", change: -2, emoji: "🌾" },
   { id: 2, name: "আলু", category: "সবজি", price: 35, unit: "কেজি", change: 5, emoji: "🥔" },
-  { id: 3, name: "পেঁয়াজ", category: "সবজি", price: 60, unit: "কেজি", change: 3, emoji: "🧅" },
-  { id: 4, name: "সয়াবিন তেল", category: "তেল", price: 170, unit: "লিটার", change: -1, emoji: "🫗" },
+  { id: 3, name: "পেঁয়াজ", category: "সবজি", price: 60, unit: "কেজি", change: 3, emoji: "🧅" },
+  { id: 4, name: "সয়াবিন তেল", category: "তেল", price: 170, unit: "লিটার", change: -1, emoji: "🫗" },
   { id: 5, name: "মসুর ডাল", category: "ডাল", price: 120, unit: "কেজি", change: 2, emoji: "🫘" },
   { id: 6, name: "ডিম", category: "নিত্যপণ্য", price: 55, unit: "৪টি", change: 0, emoji: "🥚" },
   { id: 7, name: "টমেটো", category: "সবজি", price: 45, unit: "কেজি", change: -3, emoji: "🍅" },
   { id: 8, name: "রসুন", category: "মসলা", price: 180, unit: "কেজি", change: 2, emoji: "🧄" },
 ];
 
-const categoryList = ["সব পণ্য", "চাল", "সবজি", "তেল", "ডাল", "মসলা", "নিত্যপণ্য"];
+const categories = [
+  "সব পণ্য",
+  "চাল",
+  "সবজি",
+  "তেল",
+  "ডাল",
+  "মসলা",
+  "নিত্যপণ্য",
+];
 
-function bengaliNumber(value: number | string): string {
-  const digits = "০১২৩৪৫৬৭৮৯";
-  return String(value).replace(/[0-9]/g, (digit) => digits[Number(digit)]);
+function bn(value: number | string): string {
+  return String(value).replace(/[0-9]/g, (digit) => "০১২৩৪৫৬৭৮৯"[Number(digit)]);
+}
+
+function getEmoji(category: string): string {
+  if (category.includes("চাল")) return "🌾";
+  if (category.includes("সবজি")) return "🥬";
+  if (category.includes("তেল")) return "🫗";
+  if (category.includes("ডাল")) return "🫘";
+  if (category.includes("মসলা")) return "🌶️";
+  return "🛒";
+}
+
+function readProducts(result: unknown): Product[] {
+  let items: unknown[] = [];
+
+  if (Array.isArray(result)) {
+    items = result;
+  } else if (result && typeof result === "object") {
+    const data = result as Record<string, unknown>;
+
+    if (Array.isArray(data.products)) items = data.products;
+    else if (Array.isArray(data.data)) items = data.data;
+    else if (Array.isArray(data.results)) items = data.results;
+  }
+
+  return items.map((item, index) => {
+    const p = item as Record<string, unknown>;
+
+    const rawPrice = Number(
+      p.price ?? p.current_price ?? p.currentPrice ?? 0
+    );
+
+    const rawChange = Number(
+      p.change ?? p.price_change ?? p.priceChange ?? 0
+    );
+
+    const category = String(
+      p.category_bn ?? p.category_name_bn ?? p.category ?? "নিত্যপণ্য"
+    );
+
+    return {
+      id: (p.id as number | string) ?? index + 1,
+      name: String(p.name_bn ?? p.name ?? p.title ?? "নাম নেই"),
+      category,
+      price: Number.isFinite(rawPrice) ? rawPrice : 0,
+      unit: String(p.unit_bn ?? p.unit ?? "কেজি"),
+      change: Number.isFinite(rawChange) ? rawChange : 0,
+      emoji: getEmoji(category),
+    };
+  });
 }
 
 export default function Home() {
   const [products, setProducts] = useState<Product[]>(demoProducts);
   const [category, setCategory] = useState("সব পণ্য");
   const [search, setSearch] = useState("");
-  const [apiStatus, setApiStatus] = useState("ডেমো বাজারদর");
+  const [today, setToday] = useState("");
+  const [apiStatus, setApiStatus] = useState("নমুনা বাজারদর");
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    setToday(
+      new Intl.DateTimeFormat("bn-BD", {
+        day: "numeric",
+        month: "long",
+        year: "numeric",
+        timeZone: "Asia/Dhaka",
+      }).format(new Date())
+    );
+
     let cancelled = false;
 
-    async function fetchProducts() {
-      try {
-        const response = await fetch(
-          "https://api.api-store.workers.dev/api/bazardor/products"
-        );
+    async function loadProducts() {
+      for (const base of API_BASES) {
+        try {
+          const response = await fetch(`${base}/products`);
 
-        if (!response.ok) {
-          throw new Error("API request failed");
+          if (!response.ok) continue;
+
+          const result: unknown = await response.json();
+          const mapped = readProducts(result);
+
+          if (!cancelled && mapped.length > 0) {
+            setProducts(mapped);
+            setApiStatus("API থেকে প্রাপ্ত তথ্য");
+            setLoading(false);
+            return;
+          }
+        } catch {
+          // Try the next API endpoint.
         }
+      }
 
-        const result: unknown = await response.json();
-
-        let items: unknown[] = [];
-
-        if (Array.isArray(result)) {
-          items = result;
-        } else if (result && typeof result === "object") {
-          const data = result as Record<string, unknown>;
-          if (Array.isArray(data.products)) items = data.products;
-          else if (Array.isArray(data.data)) items = data.data;
-          else if (Array.isArray(data.results)) items = data.results;
-        }
-
-        const mapped = items.map((item, index) => {
-          const p = item as Record<string, unknown>;
-          const priceValue = Number(p.price ?? p.current_price ?? 0);
-          const changeValue = Number(p.change ?? p.price_change ?? 0);
-
-          return {
-            id: (p.id as number | string) ?? index + 1,
-            name: String(p.name_bn ?? p.name ?? p.title ?? "নাম নেই"),
-            category: String(p.category_bn ?? p.category ?? "নিত্যপণ্য"),
-            price: Number.isFinite(priceValue) ? priceValue : 0,
-            unit: String(p.unit_bn ?? p.unit ?? "কেজি"),
-            change: Number.isFinite(changeValue) ? changeValue : 0,
-            emoji: "🛍️",
-          };
-        });
-
-        if (!cancelled && mapped.length > 0) {
-          setProducts(mapped);
-          setApiStatus("API থেকে প্রাপ্ত তথ্য");
-        }
-      } catch {
-        if (!cancelled) {
-          setApiStatus("নমুনা বাজারদর");
-        }
+      if (!cancelled) {
+        setApiStatus("নমুনা বাজারদর");
+        setLoading(false);
       }
     }
 
-    fetchProducts();
+    void loadProducts();
 
     return () => {
       cancelled = true;
@@ -103,7 +152,7 @@ export default function Home() {
 
     const matchesSearch = product.name
       .toLowerCase()
-      .includes(search.toLowerCase());
+      .includes(search.trim().toLowerCase());
 
     return matchesCategory && matchesSearch;
   });
@@ -111,25 +160,19 @@ export default function Home() {
   const rising = [...products]
     .filter((product) => product.change > 0)
     .sort((a, b) => b.change - a.change)
-    .slice(0, 3);
+    .slice(0, 6);
 
   const falling = [...products]
     .filter((product) => product.change < 0)
     .sort((a, b) => a.change - b.change)
-    .slice(0, 3);
-
-  const today = new Intl.DateTimeFormat("bn-BD", {
-    day: "numeric",
-    month: "long",
-    year: "numeric",
-  }).format(new Date());
+    .slice(0, 6);
 
   return (
     <main>
       <div className="top-strip">
         <div className="container top-strip-inner">
           <span>বাংলাদেশের দৈনিক বাজারদর</span>
-          <span>আজ: {today}</span>
+          <span>আজ: {today || "বাংলাদেশের বাজার"}</span>
         </div>
       </div>
 
@@ -151,7 +194,9 @@ export default function Home() {
 
           <div className="nav-actions">
             <a className="login-link" href="#login">লগইন</a>
-            <a className="button button-small" href="#products">দাম দেখুন ↗</a>
+            <a className="button button-small" href="#products">
+              দাম দেখুন ↗
+            </a>
           </div>
         </div>
       </header>
@@ -160,10 +205,22 @@ export default function Home() {
         <div className="ticker-label">বাজারদর</div>
         <div className="ticker-track">
           {[...products, ...products].map((product, index) => (
-            <span className="ticker-item" key={`${product.id}-${index}`}>
-              {product.name} <strong>৳{bengaliNumber(product.price)}</strong>
-              <span className={product.change > 0 ? "ticker-up" : "ticker-down"}>
-                {product.change > 0 ? "↑" : "↓"}
+            <span
+              className="ticker-item"
+              key={`${product.id}-${index}`}
+            >
+              {product.name}{" "}
+              <strong>৳{bn(product.price)}</strong>{" "}
+              <span
+                className={
+                  product.change > 0 ? "ticker-up" : "ticker-down"
+                }
+              >
+                {product.change > 0
+                  ? "↑"
+                  : product.change < 0
+                    ? "↓"
+                    : "—"}
               </span>
             </span>
           ))}
@@ -177,22 +234,33 @@ export default function Home() {
               <span className="eyebrow-dot" />
               সঠিক বাজারদর, প্রতিদিন
             </div>
+
             <h1>
               বাজারের খবর রাখুন,
               <br />
-              <span>সাশ্রয়ী থাকুন।</span>
+              <span>সাশ্রয়ী থাকুন।</span>
             </h1>
+
             <p className="hero-description">
-              প্রতিদিনের নিত্যপ্রয়োজনীয় পণ্যের বাজারদর জানুন এক জায়গায়।
-              কেনাকাটার আগে দাম যাচাই করুন, সিদ্ধান্ত নিন নিশ্চিন্তে।
+              প্রতিদিনের নিত্যপ্রয়োজনীয় পণ্যের বাজারদর জানুন এক
+              জায়গায়। কেনাকাটার আগে দাম যাচাই করুন, সিদ্ধান্ত নিন
+              নিশ্চিন্তে।
             </p>
+
             <div className="hero-actions">
-              <a className="button" href="#products">আজকের বাজারদর দেখুন ↗</a>
-              <a className="text-link" href="#trends">দামের পরিবর্তন →</a>
+              <a className="button" href="#products">
+                আজকের বাজারদর দেখুন ↗
+              </a>
+              <a className="text-link" href="#trends">
+                দামের পরিবর্তন →
+              </a>
             </div>
+
             <div className="hero-trust">
               <div className="trust-avatars">
-                <span>🌾</span><span>🥬</span><span>🛒</span>
+                <span>🌾</span>
+                <span>🥬</span>
+                <span>🛒</span>
               </div>
               <p>
                 <strong>প্রতিদিনের বাজারের সঙ্গী</strong>
@@ -221,7 +289,11 @@ export default function Home() {
                 </div>
               </div>
             </div>
-            <div className="hero-sticker sticker-top">✓ দৈনিক আপডেট</div>
+
+            <div className="hero-sticker sticker-top">
+              ✓ দৈনিক আপডেট
+            </div>
+
             <div className="hero-sticker sticker-bottom">
               <span className="sticker-icon">৳</span>
               <div>
@@ -246,13 +318,17 @@ export default function Home() {
               <p className="section-kicker">ক্যাটাগরি অনুসারে</p>
               <h2>কী কিনতে চান?</h2>
             </div>
-            <a className="text-link" href="#products">সব পণ্য দেখুন →</a>
+            <a className="text-link" href="#products">
+              সব পণ্য দেখুন →
+            </a>
           </div>
 
           <div className="category-list">
-            {categoryList.map((item, index) => (
+            {categories.map((item, index) => (
               <button
-                className={`category-chip ${category === item ? "selected" : ""}`}
+                className={`category-chip ${
+                  category === item ? "selected" : ""
+                }`}
                 key={item}
                 onClick={() => setCategory(item)}
                 type="button"
@@ -275,44 +351,73 @@ export default function Home() {
               <p className="section-kicker">বাজারের হালচাল</p>
               <h2>দামের পরিবর্তন</h2>
               <p className="section-subtitle">
-                কোন পণ্যের দাম বাড়ছে, কোনটির কমছে—এক নজরে দেখুন।
+                কোন পণ্যের দাম বাড়ছে, কোনটির কমছে—এক নজরে দেখুন।
               </p>
             </div>
-            <span className="updated-pill"><span /> {apiStatus}</span>
+            <span className="updated-pill">
+              <span /> {loading ? "তথ্য লোড হচ্ছে..." : apiStatus}
+            </span>
           </div>
 
           <div className="trend-grid">
             <div className="trend-panel">
               <div className="trend-panel-title">
                 <span className="trend-symbol up-symbol">↗</span>
-                <div><h3>দাম বেড়েছে</h3><p>দাম ঊর্ধ্বমুখী পণ্য</p></div>
-              </div>
-              {rising.length ? rising.map((product) => (
-                <div className="trend-row" key={product.id}>
-                  <span className="trend-product-icon">{product.emoji}</span>
-                  <span className="trend-name">{product.name}</span>
-                  <strong>৳{bengaliNumber(product.price)}</strong>
-                  <span className="change up">↑ {bengaliNumber(product.change)}%</span>
+                <div>
+                  <h3>দাম বেড়েছে</h3>
+                  <p>দাম ঊর্ধ্বমুখী পণ্য</p>
                 </div>
-              )) : <p className="trend-empty">দাম বাড়ার তথ্য পাওয়া যায়নি।</p>}
+              </div>
+
+              {rising.length ? (
+                rising.map((product) => (
+                  <div className="trend-row" key={product.id}>
+                    <span className="trend-product-icon">{product.emoji}</span>
+                    <span className="trend-name">{product.name}</span>
+                    <strong>৳{bn(product.price)}</strong>
+                    <span className="change up">
+                      ↑ {bn(product.change)}%
+                    </span>
+                  </div>
+                ))
+              ) : (
+                <p className="trend-empty">
+                  দাম বাড়ার তথ্য পাওয়া যায়নি।
+                </p>
+              )}
             </div>
 
             <div className="trend-panel">
               <div className="trend-panel-title">
                 <span className="trend-symbol down-symbol">↘</span>
-                <div><h3>দাম কমেছে</h3><p>দাম নিম্নমুখী পণ্য</p></div>
-              </div>
-              {falling.length ? falling.map((product) => (
-                <div className="trend-row" key={product.id}>
-                  <span className="trend-product-icon">{product.emoji}</span>
-                  <span className="trend-name">{product.name}</span>
-                  <strong>৳{bengaliNumber(product.price)}</strong>
-                  <span className="change down">↓ {bengaliNumber(Math.abs(product.change))}%</span>
+                <div>
+                  <h3>দাম কমেছে</h3>
+                  <p>দাম নিম্নমুখী পণ্য</p>
                 </div>
-              )) : <p className="trend-empty">দাম কমার তথ্য পাওয়া যায়নি।</p>}
+              </div>
+
+              {falling.length ? (
+                falling.map((product) => (
+                  <div className="trend-row" key={product.id}>
+                    <span className="trend-product-icon">{product.emoji}</span>
+                    <span className="trend-name">{product.name}</span>
+                    <strong>৳{bn(product.price)}</strong>
+                    <span className="change down">
+                      ↓ {bn(Math.abs(product.change))}%
+                    </span>
+                  </div>
+                ))
+              ) : (
+                <p className="trend-empty">
+                  দাম কমার তথ্য পাওয়া যায়নি।
+                </p>
+              )}
             </div>
           </div>
-          <p className="data-note">* দামের পরিবর্তন নমুনা বা API ডেটার ওপর নির্ভরশীল।</p>
+
+          <p className="data-note">
+            * দামের পরিবর্তন API-তে থাকা তথ্যের ওপর নির্ভরশীল।
+          </p>
         </div>
       </section>
 
@@ -323,7 +428,7 @@ export default function Home() {
               <p className="section-kicker">আজকের তালিকা</p>
               <h2>নিত্যপণ্যের বাজারদর</h2>
               <p className="section-subtitle">
-                কেনাকাটার আগে জেনে নিন প্রয়োজনীয় পণ্যের দাম।
+                কেনাকাটার আগে জেনে নিন প্রয়োজনীয় পণ্যের দাম।
               </p>
             </div>
 
@@ -340,9 +445,11 @@ export default function Home() {
 
           <div className="product-filter-row">
             <div className="filter-chips">
-              {categoryList.map((item) => (
+              {categories.map((item) => (
                 <button
-                  className={`filter-chip ${category === item ? "filter-active" : ""}`}
+                  className={`filter-chip ${
+                    category === item ? "filter-active" : ""
+                  }`}
                   key={item}
                   onClick={() => setCategory(item)}
                   type="button"
@@ -351,8 +458,14 @@ export default function Home() {
                 </button>
               ))}
             </div>
-            <span className="product-count">{bengaliNumber(visibleProducts.length)}টি পণ্য</span>
+            <span className="product-count">
+              {bn(visibleProducts.length)}টি পণ্য
+            </span>
           </div>
+
+          {loading && (
+            <p className="data-note">বাজারদরের তথ্য লোড হচ্ছে...</p>
+          )}
 
           <div className="products-grid">
             {visibleProducts.map((product) => (
@@ -361,15 +474,22 @@ export default function Home() {
                   <span>{product.emoji}</span>
                   <span className="product-category">{product.category}</span>
                 </div>
+
                 <div className="product-info">
                   <h3>{product.name}</h3>
                   <p className="unit-label">প্রতি {product.unit}</p>
+
                   <div className="price-row">
-                    <p className="price">৳{bengaliNumber(product.price)}</p>
+                    <p className="price">৳{bn(product.price)}</p>
+
                     {product.change > 0 ? (
-                      <span className="change up">↑ {bengaliNumber(product.change)}%</span>
+                      <span className="change up">
+                        ↑ {bn(product.change)}%
+                      </span>
                     ) : product.change < 0 ? (
-                      <span className="change down">↓ {bengaliNumber(Math.abs(product.change))}%</span>
+                      <span className="change down">
+                        ↓ {bn(Math.abs(product.change))}%
+                      </span>
                     ) : (
                       <span className="change stable">— স্থির</span>
                     )}
@@ -382,11 +502,14 @@ export default function Home() {
           {visibleProducts.length === 0 && (
             <div className="empty-state">
               <span>🔎</span>
-              <h3>কোনো পণ্য পাওয়া যায়নি</h3>
-              <p>অন্য নাম বা ক্যাটাগরি দিয়ে খুঁজে দেখুন।</p>
+              <h3>কোনো পণ্য পাওয়া যায়নি</h3>
+              <p>অন্য নাম বা ক্যাটাগরি দিয়ে খুঁজে দেখুন।</p>
               <button
                 className="button"
-                onClick={() => { setSearch(""); setCategory("সব পণ্য"); }}
+                onClick={() => {
+                  setSearch("");
+                  setCategory("সব পণ্য");
+                }}
                 type="button"
               >
                 সব পণ্য দেখুন
@@ -396,7 +519,13 @@ export default function Home() {
 
           <div className="products-bottom">
             <span>আপনার দৈনন্দিন বাজার, আরও সহজে।</span>
-            <a href="#" onClick={(event) => { event.preventDefault(); window.scrollTo({ top: 0, behavior: "smooth" }); }}>
+            <a
+              href="#"
+              onClick={(event) => {
+                event.preventDefault();
+                window.scrollTo({ top: 0, behavior: "smooth" });
+              }}
+            >
               উপরে ফিরে যান ↑
             </a>
           </div>
@@ -407,10 +536,18 @@ export default function Home() {
         <div className="container cta-card">
           <div>
             <p className="section-kicker">বাজার করুন বুদ্ধিমত্তার সঙ্গে</p>
-            <h2>দাম জেনে কিনুন,<br />সাশ্রয় করুন প্রতিদিন।</h2>
-            <p>সঠিক তথ্যের মাধ্যমে আপনার বাজারের পরিকল্পনা হোক আরও সহজ।</p>
+            <h2>
+              দাম জেনে কিনুন,
+              <br />
+              সাশ্রয় করুন প্রতিদিন।
+            </h2>
+            <p>
+              সঠিক তথ্যের মাধ্যমে আপনার বাজারের পরিকল্পনা হোক আরও সহজ।
+            </p>
           </div>
-          <a className="button button-light" href="#products">বাজারদর দেখুন ↗</a>
+          <a className="button button-light" href="#products">
+            বাজারদর দেখুন ↗
+          </a>
         </div>
       </section>
 
@@ -419,29 +556,41 @@ export default function Home() {
           <div className="footer-brand">
             <a className="brand" href="#">
               <span className="brand-mark">ব</span>
-              <span className="brand-name">বাজার<span>দর</span></span>
+              <span className="brand-name">
+                বাজার<span>দর</span>
+              </span>
             </a>
-            <p>প্রতিদিনের বাজারদর জানুন সহজে।<br />সঠিক তথ্য, সাশ্রয়ী কেনাকাটা।</p>
+            <p>
+              প্রতিদিনের বাজারদর জানুন সহজে।
+              <br />
+              সঠিক তথ্য, সাশ্রয়ী কেনাকাটা।
+            </p>
           </div>
+
           <div className="footer-links">
             <h4>দ্রুত লিংক</h4>
             <a href="#">হোম</a>
             <a href="#products">বাজারদর</a>
             <a href="#trends">দামের পরিবর্তন</a>
           </div>
+
           <div className="footer-links">
             <h4>আমাদের লক্ষ্য</h4>
-            <p>বাজারের তথ্য সহজলভ্য করা এবং সচেতন কেনাকাটায় সহায়তা করা।</p>
+            <p>
+              বাজারের তথ্য সহজলভ্য করা এবং সচেতন কেনাকাটায় সহায়তা করা।
+            </p>
           </div>
+
           <div className="footer-contact">
             <span className="footer-leaf">✳</span>
-            <h4>বাজার থাকুক হাতের মুঠোয়</h4>
+            <h4>বাজার থাকুক হাতের মুঠোয়</h4>
             <p>প্রতিদিন ফিরে আসুন নতুন বাজারদরের খোঁজে।</p>
           </div>
         </div>
+
         <div className="container footer-bottom">
-          <span>© {bengaliNumber(new Date().getFullYear())} বাজার দর। সর্বস্বত্ব সংরক্ষিত।</span>
-          <span>বাংলাদেশের বাজারের জন্য ভালোবাসা দিয়ে তৈরি ♥</span>
+          <span>© বাজার দর। সর্বস্বত্ব সংরক্ষিত।</span>
+          <span>বাংলাদেশের বাজারের জন্য ভালোবাসা দিয়ে তৈরি ♥</span>
         </div>
       </footer>
     </main>
