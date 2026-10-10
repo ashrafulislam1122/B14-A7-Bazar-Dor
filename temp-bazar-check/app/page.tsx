@@ -1,141 +1,270 @@
 
 "use client";
 
-import { useEffect, useState } from "react";
+import Link from "next/link";
+import { useEffect, useMemo, useState } from "react";
+import { authClient } from "@/app/lib/auth-client";
 
-type Product = {
-  id: number | string;
-  name: string;
-  category: string;
-  price: number;
-  unit: string;
-  change: number;
-  emoji: string;
+type Market = {
+  market: string;
+  division?: string;
+  min: number;
+  max: number;
 };
 
-const API_BASES = [
-  "https://api.api-store.workers.dev/api/bazardor",
-  "https://api.abcz.workers.dev/api/bazardor",
+type ApiProduct = {
+  id: string | number;
+  slug: string;
+  nameBn: string;
+  category: string;
+  categoryNameBn?: string;
+  categoryIcon?: string;
+  unit: string;
+  image?: string;
+  today: number;
+  yesterday?: number;
+  lastWeek?: number;
+  lastMonth?: number;
+  change?: { dir?: string; pct?: number };
+  markets?: Market[];
+};
+
+type Product = {
+  id: string;
+  slug: string;
+  name: string;
+  category: string;
+  categoryName: string;
+  icon: string;
+  unit: string;
+  today: number;
+  yesterday: number;
+  lastWeek: number;
+  lastMonth: number;
+  changePct: number;
+  direction: "up" | "down" | "same";
+  markets: Market[];
+};
+
+const API_URL =
+  "https://api.api-store.workers.dev/api/bazardor/products";
+
+const CATEGORIES = [
+  { id: "all", name: "সব পণ্য", icon: "🛒" },
+  { id: "chal", name: "চাল", icon: "🍚" },
+  { id: "dal", name: "ডাল", icon: "🫘" },
+  { id: "tel", name: "তেল", icon: "🫗" },
+  { id: "sobji", name: "সবজি", icon: "🥬" },
+  { id: "mach", name: "মাছ", icon: "🐟" },
+  { id: "mangsho", name: "মাংস", icon: "🍗" },
+  { id: "dim-dui", name: "ডিম ও দুগ্ধ", icon: "🥚" },
+  { id: "mosla", name: "মসলা", icon: "🌶️" },
 ];
 
-const demoProducts: Product[] = [
-  { id: 1, name: "মিনিকেট চাল", category: "চাল", price: 72, unit: "কেজি", change: -2, emoji: "🌾" },
-  { id: 2, name: "আলু", category: "সবজি", price: 35, unit: "কেজি", change: 5, emoji: "🥔" },
-  { id: 3, name: "পেঁয়াজ", category: "সবজি", price: 60, unit: "কেজি", change: 3, emoji: "🧅" },
-  { id: 4, name: "সয়াবিন তেল", category: "তেল", price: 170, unit: "লিটার", change: -1, emoji: "🫗" },
-  { id: 5, name: "মসুর ডাল", category: "ডাল", price: 120, unit: "কেজি", change: 2, emoji: "🫘" },
-  { id: 6, name: "ডিম", category: "নিত্যপণ্য", price: 55, unit: "৪টি", change: 0, emoji: "🥚" },
-  { id: 7, name: "টমেটো", category: "সবজি", price: 45, unit: "কেজি", change: -3, emoji: "🍅" },
-  { id: 8, name: "রসুন", category: "মসলা", price: 180, unit: "কেজি", change: 2, emoji: "🧄" },
-];
-
-const categories = [
-  "সব পণ্য",
-  "চাল",
-  "সবজি",
-  "তেল",
-  "ডাল",
-  "মসলা",
-  "নিত্যপণ্য",
-];
-
-function bn(value: number | string): string {
-  return String(value).replace(/[0-9]/g, (digit) => "০১২৩৪৫৬৭৮৯"[Number(digit)]);
+function bnNumber(value: number) {
+  return new Intl.NumberFormat("bn-BD", {
+    maximumFractionDigits: 2,
+  }).format(value);
 }
 
-function getEmoji(category: string): string {
-  if (category.includes("চাল")) return "🌾";
-  if (category.includes("সবজি")) return "🥬";
-  if (category.includes("তেল")) return "🫗";
-  if (category.includes("ডাল")) return "🫘";
-  if (category.includes("মসলা")) return "🌶️";
-  return "🛒";
+function formatPrice(value: number) {
+  return "৳" + bnNumber(value);
 }
 
-function readProducts(result: unknown): Product[] {
-  let items: unknown[] = [];
+function formatUnit(unit: string) {
+  const units: Record<string, string> = {
+    kg: "কেজি",
+    litre: "লিটার",
+    liter: "লিটার",
+    dozen: "ডজন",
+    piece: "টি",
+    gram: "গ্রাম",
+    packet: "প্যাকেট",
+  };
 
-  if (Array.isArray(result)) {
-    items = result;
-  } else if (result && typeof result === "object") {
-    const data = result as Record<string, unknown>;
+  return units[unit?.toLowerCase()] || unit || "একক";
+}
 
-    if (Array.isArray(data.products)) items = data.products;
-    else if (Array.isArray(data.data)) items = data.data;
-    else if (Array.isArray(data.results)) items = data.results;
+function mapApiProduct(item: ApiProduct): Product {
+  const today = Number(item.today) || 0;
+  const yesterday = Number(item.yesterday ?? today);
+
+  const calculatedChange =
+    yesterday !== 0
+      ? ((today - yesterday) / yesterday) * 100
+      : 0;
+
+  const changePct = Number(
+    item.change?.pct ?? calculatedChange,
+  );
+
+  let direction: Product["direction"] = "same";
+
+  if (item.change?.dir === "up" || changePct > 0) {
+    direction = "up";
+  } else if (item.change?.dir === "down" || changePct < 0) {
+    direction = "down";
   }
 
-  return items.map((item, index) => {
-    const p = item as Record<string, unknown>;
+  const category = item.category || "other";
+  const categoryInfo = CATEGORIES.find(
+    (entry) => entry.id === category,
+  );
 
-    const rawPrice = Number(
-      p.price ?? p.current_price ?? p.currentPrice ?? 0
-    );
-
-    const rawChange = Number(
-      p.change ?? p.price_change ?? p.priceChange ?? 0
-    );
-
-    const category = String(
-      p.category_bn ?? p.category_name_bn ?? p.category ?? "নিত্যপণ্য"
-    );
-
-    return {
-      id: (p.id as number | string) ?? index + 1,
-      name: String(p.name_bn ?? p.name ?? p.title ?? "নাম নেই"),
-      category,
-      price: Number.isFinite(rawPrice) ? rawPrice : 0,
-      unit: String(p.unit_bn ?? p.unit ?? "কেজি"),
-      change: Number.isFinite(rawChange) ? rawChange : 0,
-      emoji: getEmoji(category),
-    };
-  });
+  return {
+    id: String(item.id),
+    slug: item.slug || String(item.id),
+    name: item.nameBn || "নাম পাওয়া যায়নি",
+    category,
+    categoryName:
+      item.categoryNameBn || categoryInfo?.name || "অন্যান্য",
+    icon:
+      item.image ||
+      item.categoryIcon ||
+      categoryInfo?.icon ||
+      "🛍️",
+    unit: item.unit || "kg",
+    today,
+    yesterday,
+    lastWeek: Number(item.lastWeek ?? today),
+    lastMonth: Number(item.lastMonth ?? today),
+    changePct,
+    direction,
+    markets: Array.isArray(item.markets) ? item.markets : [],
+  };
 }
 
-export default function Home() {
-  const [products, setProducts] = useState<Product[]>(demoProducts);
-  const [category, setCategory] = useState("সব পণ্য");
-  const [search, setSearch] = useState("");
-  const [today, setToday] = useState("");
-  const [apiStatus, setApiStatus] = useState("নমুনা বাজারদর");
+function ProductCard({ product }: { product: Product }) {
+  const isUp = product.direction === "up";
+  const isDown = product.direction === "down";
+
+  return (
+    <Link
+      href={"/product/" + product.slug}
+      className="group block rounded-2xl border border-gray-200 bg-white p-4 shadow-sm transition hover:-translate-y-1 hover:border-emerald-300 hover:shadow-md"
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-50 text-3xl">
+          {product.icon}
+        </div>
+
+        <span
+          className={
+            "rounded-full px-2.5 py-1 text-xs font-semibold " +
+            (isUp
+              ? "bg-red-50 text-red-600"
+              : isDown
+                ? "bg-emerald-50 text-emerald-700"
+                : "bg-gray-100 text-gray-600")
+          }
+        >
+          {isUp ? "▲" : isDown ? "▼" : "—"}{" "}
+          {bnNumber(Math.abs(product.changePct))}%
+        </span>
+      </div>
+
+      <div className="mt-4">
+        <p className="font-semibold text-gray-900 group-hover:text-emerald-700">
+          {product.name}
+        </p>
+
+        <p className="mt-1 text-sm text-gray-500">
+          {product.categoryName} · প্রতি {formatUnit(product.unit)}
+        </p>
+
+        <div className="mt-4 flex items-end justify-between gap-2">
+          <p className="text-xl font-bold text-gray-900">
+            {formatPrice(product.today)}
+          </p>
+
+          <span className="text-sm font-semibold text-emerald-700">
+            বিস্তারিত →
+          </span>
+        </div>
+      </div>
+    </Link>
+  );
+}
+
+function ProductSkeleton() {
+  return (
+    <div className="animate-pulse rounded-2xl border border-gray-200 bg-white p-4">
+      <div className="h-14 w-14 rounded-2xl bg-gray-200" />
+      <div className="mt-4 h-4 w-3/4 rounded bg-gray-200" />
+      <div className="mt-3 h-3 w-1/2 rounded bg-gray-100" />
+      <div className="mt-5 h-7 w-2/3 rounded bg-gray-200" />
+    </div>
+  );
+}
+
+export default function HomePage() {
+  const { data: session, isPending } = authClient.useSession();
+
+  const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+  const [search, setSearch] = useState("");
+  const [activeCategory, setActiveCategory] = useState("all");
+  const [sort, setSort] = useState("default");
+  const [todayDate, setTodayDate] = useState("");
+  const [currentYear, setCurrentYear] = useState("");
 
   useEffect(() => {
-    setToday(
+    const now = new Date();
+
+    setTodayDate(
       new Intl.DateTimeFormat("bn-BD", {
-        day: "numeric",
-        month: "long",
-        year: "numeric",
+        dateStyle: "full",
         timeZone: "Asia/Dhaka",
-      }).format(new Date())
+      }).format(now),
     );
 
+    setCurrentYear(
+      new Intl.DateTimeFormat("bn-BD", {
+        year: "numeric",
+        timeZone: "Asia/Dhaka",
+      }).format(now),
+    );
+  }, []);
+
+  useEffect(() => {
     let cancelled = false;
 
     async function loadProducts() {
-      for (const base of API_BASES) {
-        try {
-          const response = await fetch(`${base}/products`);
+      try {
+        const response = await fetch(API_URL, {
+          cache: "no-store",
+        });
 
-          if (!response.ok) continue;
-
-          const result: unknown = await response.json();
-          const mapped = readProducts(result);
-
-          if (!cancelled && mapped.length > 0) {
-            setProducts(mapped);
-            setApiStatus("API থেকে প্রাপ্ত তথ্য");
-            setLoading(false);
-            return;
-          }
-        } catch {
-          // Try the next API endpoint.
+        if (!response.ok) {
+          throw new Error("পণ্যের তথ্য পাওয়া যায়নি");
         }
-      }
 
-      if (!cancelled) {
-        setApiStatus("নমুনা বাজারদর");
-        setLoading(false);
+        const result = await response.json();
+
+        const rawProducts: ApiProduct[] = Array.isArray(result)
+          ? result
+          : Array.isArray(result?.products)
+            ? result.products
+            : [];
+
+        if (rawProducts.length === 0) {
+          throw new Error("কোনো পণ্য পাওয়া যায়নি");
+        }
+
+        if (!cancelled) {
+          setProducts(rawProducts.map(mapApiProduct));
+          setError(false);
+        }
+      } catch {
+        if (!cancelled) {
+          setProducts([]);
+          setError(true);
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
       }
     }
 
@@ -146,451 +275,441 @@ export default function Home() {
     };
   }, []);
 
-  const visibleProducts = products.filter((product) => {
-    const matchesCategory =
-      category === "সব পণ্য" || product.category.includes(category);
+  const filteredProducts = useMemo(() => {
+    let result = products.slice();
 
-    const matchesSearch = product.name
-      .toLowerCase()
-      .includes(search.trim().toLowerCase());
+    if (activeCategory !== "all") {
+      result = result.filter(
+        (product) => product.category === activeCategory,
+      );
+    }
 
-    return matchesCategory && matchesSearch;
-  });
+    const query = search.trim().toLowerCase();
 
-  const rising = [...products]
-    .filter((product) => product.change > 0)
-    .sort((a, b) => b.change - a.change)
-    .slice(0, 6);
+    if (query) {
+      result = result.filter(
+        (product) =>
+          product.name.toLowerCase().includes(query) ||
+          product.categoryName.toLowerCase().includes(query),
+      );
+    }
 
-  const falling = [...products]
-    .filter((product) => product.change < 0)
-    .sort((a, b) => a.change - b.change)
-    .slice(0, 6);
+    if (sort === "low") {
+      result.sort((a, b) => a.today - b.today);
+    } else if (sort === "high") {
+      result.sort((a, b) => b.today - a.today);
+    } else if (sort === "change") {
+      result.sort((a, b) => b.changePct - a.changePct);
+    }
+
+    return result;
+  }, [products, activeCategory, search, sort]);
+
+  const risingProducts = useMemo(
+    () =>
+      products
+        .filter((product) => product.changePct > 0)
+        .sort((a, b) => b.changePct - a.changePct)
+        .slice(0, 6),
+    [products],
+  );
+
+  const fallingProducts = useMemo(
+    () =>
+      products
+        .filter((product) => product.changePct < 0)
+        .sort((a, b) => a.changePct - b.changePct)
+        .slice(0, 6),
+    [products],
+  );
+
+  async function handleSignOut() {
+    try {
+      const result = await authClient.signOut();
+
+      if (result.error) {
+        alert("লগআউট করা যায়নি। আবার চেষ্টা করুন।");
+        return;
+      }
+
+      window.location.href = "/";
+    } catch {
+      alert("লগআউট করার সময় সমস্যা হয়েছে। আবার চেষ্টা করুন।");
+    }
+  }
 
   return (
-    <main>
-      <div className="top-strip">
-        <div className="container top-strip-inner">
-          <span>বাংলাদেশের দৈনিক বাজারদর</span>
-          <span>আজ: {today || "বাংলাদেশের বাজার"}</span>
-        </div>
+    <main className="min-h-screen bg-gray-50 text-gray-900">
+      <div className="bg-emerald-800 px-4 py-2 text-center text-sm text-white">
+        {todayDate || "প্রতিদিনের বাজারদর"} · সঠিক সিদ্ধান্ত নিন, সাশ্রয় করুন
       </div>
 
-      <header className="navbar">
-        <div className="container nav-inner">
-          <a className="brand" href="#">
-            <span className="brand-mark">ব</span>
-            <span className="brand-name">
-              বাজার<span>দর</span>
-            </span>
-          </a>
+      <header className="sticky top-0 z-40 border-b border-gray-200 bg-white/95">
+        <div className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-4 py-4 sm:px-6 lg:px-8">
+          <Link href="/" className="flex shrink-0 items-center gap-2">
+            <img
+              src="/logo-icon.png"
+              alt="বাজার দর লোগো"
+              className="h-11 w-11 rounded-xl object-contain"
+            />
 
-          <nav className="desktop-nav">
-            <a className="nav-link active" href="#">হোম</a>
-            <a className="nav-link" href="#products">বাজারদর</a>
-            <a className="nav-link" href="#trends">দামের পরিবর্তন</a>
-            <a className="nav-link" href="#about">আমাদের সম্পর্কে</a>
-          </nav>
-
-          <div className="nav-actions">
-            <a className="login-link" href="#login">লগইন</a>
-            <a className="button button-small" href="#products">
-              দাম দেখুন ↗
-            </a>
-          </div>
-        </div>
-      </header>
-
-      <div className="ticker">
-        <div className="ticker-label">বাজারদর</div>
-        <div className="ticker-track">
-          {[...products, ...products].map((product, index) => (
-            <span
-              className="ticker-item"
-              key={`${product.id}-${index}`}
-            >
-              {product.name}{" "}
-              <strong>৳{bn(product.price)}</strong>{" "}
-              <span
-                className={
-                  product.change > 0 ? "ticker-up" : "ticker-down"
-                }
-              >
-                {product.change > 0
-                  ? "↑"
-                  : product.change < 0
-                    ? "↓"
-                    : "—"}
+            <span>
+              <span className="block text-xl font-extrabold text-emerald-800">
+                বাজার দর
+              </span>
+              <span className="block text-xs text-gray-500">
+                প্রতিদিনের বাজারদর
               </span>
             </span>
-          ))}
-        </div>
-      </div>
+          </Link>
 
-      <section className="hero">
-        <div className="container hero-grid">
-          <div className="hero-copy">
-            <div className="eyebrow">
-              <span className="eyebrow-dot" />
-              সঠিক বাজারদর, প্রতিদিন
-            </div>
-
-            <h1>
-              বাজারের খবর রাখুন,
-              <br />
-              <span>সাশ্রয়ী থাকুন।</span>
-            </h1>
-
-            <p className="hero-description">
-              প্রতিদিনের নিত্যপ্রয়োজনীয় পণ্যের বাজারদর জানুন এক
-              জায়গায়। কেনাকাটার আগে দাম যাচাই করুন, সিদ্ধান্ত নিন
-              নিশ্চিন্তে।
-            </p>
-
-            <div className="hero-actions">
-              <a className="button" href="#products">
-                আজকের বাজারদর দেখুন ↗
-              </a>
-              <a className="text-link" href="#trends">
-                দামের পরিবর্তন →
-              </a>
-            </div>
-
-            <div className="hero-trust">
-              <div className="trust-avatars">
-                <span>🌾</span>
-                <span>🥬</span>
-                <span>🛒</span>
-              </div>
-              <p>
-                <strong>প্রতিদিনের বাজারের সঙ্গী</strong>
-                <br />
-                <span>সহজ, স্বচ্ছ ও নির্ভরযোগ্য তথ্য</span>
-              </p>
-            </div>
-          </div>
-
-          <div className="hero-art">
-            <div className="hero-art-glow" />
-            <div className="hero-image-frame">
-              <div className="market-illustration">
-                <div className="illustration-sun" />
-                <span className="food food-one">🥬</span>
-                <span className="food food-two">🥕</span>
-                <span className="food food-three">🍅</span>
-                <span className="food food-four">🌽</span>
-                <span className="food food-five">🥦</span>
-                <span className="food food-six">🧅</span>
-                <div className="basket">
-                  <div className="basket-handle" />
-                  <div className="basket-body">
-                    <span>বাজার</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="hero-sticker sticker-top">
-              ✓ দৈনিক আপডেট
-            </div>
-
-            <div className="hero-sticker sticker-bottom">
-              <span className="sticker-icon">৳</span>
-              <div>
-                <strong>স্মার্ট কেনাকাটা</strong>
-                <small>দাম জানুন আগে</small>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div className="hero-bottom container">
-          <span><i /> সহজে দাম তুলনা করুন</span>
-          <span><i /> প্রতিদিনের বাজার আপডেট</span>
-          <span><i /> আপনার বাজেট, আপনার সিদ্ধান্ত</span>
-        </div>
-      </section>
-
-      <section className="category-section">
-        <div className="container">
-          <div className="section-heading compact-heading">
-            <div>
-              <p className="section-kicker">ক্যাটাগরি অনুসারে</p>
-              <h2>কী কিনতে চান?</h2>
-            </div>
-            <a className="text-link" href="#products">
-              সব পণ্য দেখুন →
+          <nav className="hidden items-center gap-5 text-sm font-medium md:flex">
+            <Link href="/" className="text-emerald-700">
+              হোম
+            </Link>
+            <a href="#দাম-বাড়ছে" className="hover:text-emerald-700">
+              দাম বাড়ছে
             </a>
-          </div>
+            <a href="#দাম-কমছে" className="hover:text-emerald-700">
+              দাম কমছে
+            </a>
+            <a href="#সব-পণ্য" className="hover:text-emerald-700">
+              সব পণ্য
+            </a>
+          </nav>
 
-          <div className="category-list">
-            {categories.map((item, index) => (
+          <div className="flex shrink-0 items-center gap-2">
+            {isPending ? (
+              <span className="text-sm text-gray-500">
+                লোড হচ্ছে...
+              </span>
+            ) : session?.user ? (
+              <>
+                <Link
+                  href="/profile"
+                  title="আমার প্রোফাইল"
+                  className="flex items-center gap-2 rounded-xl border border-emerald-200 px-2 py-2 hover:bg-emerald-50 sm:px-3"
+                >
+                  <span className="flex h-9 w-9 items-center justify-center overflow-hidden rounded-full bg-emerald-100 text-lg font-bold text-emerald-800">
+                    {session.user.image ? (
+                      <img
+                        src={session.user.image}
+                        alt="প্রোফাইল"
+                        className="h-full w-full object-cover"
+                      />
+                    ) : (
+                      session.user.name?.trim()?.charAt(0)?.toUpperCase() || "👤"
+                    )}
+                  </span>
+
+                  <span className="hidden max-w-28 truncate text-sm font-semibold text-emerald-800 sm:block">
+                    {session.user.name || "আমার প্রোফাইল"}
+                  </span>
+                </Link>
+
+                <button
+                  type="button"
+                  onClick={handleSignOut}
+                  className="rounded-xl border border-red-200 px-3 py-2 text-sm font-semibold text-red-600 hover:bg-red-50"
+                >
+                  লগআউট
+                </button>
+              </>
+            ) : (
+              <>
+                <Link
+                  href="/signin"
+                  className="rounded-xl border border-emerald-700 px-3 py-2 text-sm font-semibold text-emerald-800 hover:bg-emerald-50 sm:px-4"
+                >
+                  লগইন
+                </Link>
+
+                <Link
+                  href="/signup"
+                  className="hidden rounded-xl bg-emerald-700 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-800 sm:inline-flex"
+                >
+                  নিবন্ধন
+                </Link>
+              </>
+            )}
+          </div>
+        </div>
+
+        <div className="border-t border-gray-100">
+          <div className="mx-auto flex max-w-7xl gap-2 overflow-x-auto px-4 py-3 sm:px-6 lg:px-8">
+            {CATEGORIES.map((category) => (
               <button
-                className={`category-chip ${
-                  category === item ? "selected" : ""
-                }`}
-                key={item}
-                onClick={() => setCategory(item)}
+                key={category.id}
                 type="button"
+                onClick={() => {
+                  setActiveCategory(category.id);
+                  document.getElementById("সব-পণ্য")?.scrollIntoView({
+                    behavior: "smooth",
+                  });
+                }}
+                className={
+                  "shrink-0 rounded-full px-4 py-2 text-sm font-medium " +
+                  (activeCategory === category.id
+                    ? "bg-emerald-700 text-white"
+                    : "bg-gray-100 text-gray-700 hover:bg-emerald-50")
+                }
               >
-                <span className="category-icon">
-                  {["🛒", "🌾", "🥬", "🫗", "🫘", "🌶️", "🥚"][index]}
-                </span>
-                <span>{item}</span>
-                <span className="chip-arrow">↗</span>
+                {category.icon} {category.name}
               </button>
             ))}
           </div>
         </div>
-      </section>
+      </header>
 
-      <section className="trends-section" id="trends">
-        <div className="container">
-          <div className="section-heading">
-            <div>
-              <p className="section-kicker">বাজারের হালচাল</p>
-              <h2>দামের পরিবর্তন</h2>
-              <p className="section-subtitle">
-                কোন পণ্যের দাম বাড়ছে, কোনটির কমছে—এক নজরে দেখুন।
-              </p>
-            </div>
-            <span className="updated-pill">
-              <span /> {loading ? "তথ্য লোড হচ্ছে..." : apiStatus}
+      {!loading && products.length > 0 && (
+        <div className="ticker-container overflow-hidden border-b border-emerald-100 bg-emerald-50 py-3">
+          <div className="ticker-track flex w-max items-center gap-8 whitespace-nowrap px-4">
+            {[...products, ...products].map((product, index) => (
+              <Link
+                key={product.id + "-" + index}
+                href={"/product/" + product.slug}
+                className="flex items-center gap-2 text-sm"
+              >
+                <span>{product.icon}</span>
+                <span className="font-medium">{product.name}</span>
+                <span className="font-bold text-emerald-800">
+                  {formatPrice(product.today)}/{formatUnit(product.unit)}
+                </span>
+              </Link>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <section className="bg-gradient-to-br from-emerald-950 via-emerald-800 to-green-700 text-white">
+        <div className="mx-auto grid max-w-7xl items-center gap-10 px-4 py-12 sm:px-6 sm:py-16 lg:grid-cols-2 lg:px-8">
+          <div>
+            <span className="inline-flex rounded-full border border-white/25 bg-white/10 px-4 py-2 text-sm">
+              🌿 বাংলাদেশের প্রতিদিনের বাজারদর
             </span>
-          </div>
 
-          <div className="trend-grid">
-            <div className="trend-panel">
-              <div className="trend-panel-title">
-                <span className="trend-symbol up-symbol">↗</span>
-                <div>
-                  <h3>দাম বেড়েছে</h3>
-                  <p>দাম ঊর্ধ্বমুখী পণ্য</p>
-                </div>
-              </div>
+            <h1 className="mt-6 text-4xl font-extrabold leading-tight sm:text-5xl">
+              বাজারের দাম জানুন,
+              <span className="mt-2 block text-lime-300">
+                সাশ্রয়ী কেনাকাটা করুন
+              </span>
+            </h1>
 
-              {rising.length ? (
-                rising.map((product) => (
-                  <div className="trend-row" key={product.id}>
-                    <span className="trend-product-icon">{product.emoji}</span>
-                    <span className="trend-name">{product.name}</span>
-                    <strong>৳{bn(product.price)}</strong>
-                    <span className="change up">
-                      ↑ {bn(product.change)}%
-                    </span>
-                  </div>
-                ))
-              ) : (
-                <p className="trend-empty">
-                  দাম বাড়ার তথ্য পাওয়া যায়নি।
-                </p>
-              )}
-            </div>
+            <p className="mt-5 max-w-xl text-base leading-8 text-emerald-50">
+              চাল, ডাল, তেল, সবজি, মাছ ও মাংসসহ নিত্যপ্রয়োজনীয় পণ্যের
+              দাম এক জায়গায় দেখুন। দাম তুলনা করে সচেতন কেনাকাটার সিদ্ধান্ত নিন।
+            </p>
 
-            <div className="trend-panel">
-              <div className="trend-panel-title">
-                <span className="trend-symbol down-symbol">↘</span>
-                <div>
-                  <h3>দাম কমেছে</h3>
-                  <p>দাম নিম্নমুখী পণ্য</p>
-                </div>
-              </div>
-
-              {falling.length ? (
-                falling.map((product) => (
-                  <div className="trend-row" key={product.id}>
-                    <span className="trend-product-icon">{product.emoji}</span>
-                    <span className="trend-name">{product.name}</span>
-                    <strong>৳{bn(product.price)}</strong>
-                    <span className="change down">
-                      ↓ {bn(Math.abs(product.change))}%
-                    </span>
-                  </div>
-                ))
-              ) : (
-                <p className="trend-empty">
-                  দাম কমার তথ্য পাওয়া যায়নি।
-                </p>
-              )}
+            <div className="mt-8 flex flex-wrap gap-3">
+              <a
+                href="#সব-পণ্য"
+                className="rounded-xl bg-lime-300 px-6 py-3 font-bold text-emerald-950 hover:bg-lime-200"
+              >
+                সব পণ্যের দাম দেখুন →
+              </a>
+              <a
+                href="#দাম-বাড়ছে"
+                className="rounded-xl border border-white/40 px-6 py-3 font-semibold hover:bg-white/10"
+              >
+                বাজারের পরিবর্তন
+              </a>
             </div>
           </div>
 
-          <p className="data-note">
-            * দামের পরিবর্তন API-তে থাকা তথ্যের ওপর নির্ভরশীল।
-          </p>
+          <div className="mx-auto w-full max-w-lg">
+            <img
+              src="/bazar-hero.png"
+              alt="বাজার দর ব্যানার"
+              className="h-auto w-full rounded-3xl border border-white/20 object-cover shadow-2xl"
+            />
+          </div>
         </div>
       </section>
 
-      <section className="products-section" id="products">
-        <div className="container">
-          <div className="section-heading product-heading">
-            <div>
-              <p className="section-kicker">আজকের তালিকা</p>
-              <h2>নিত্যপণ্যের বাজারদর</h2>
-              <p className="section-subtitle">
-                কেনাকাটার আগে জেনে নিন প্রয়োজনীয় পণ্যের দাম।
-              </p>
-            </div>
+      {error && (
+        <div className="mx-auto mt-6 max-w-7xl px-4 sm:px-6 lg:px-8">
+          <p className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+            লাইভ পণ্যের তথ্য পাওয়া যায়নি। ইন্টারনেট সংযোগ পরীক্ষা করে আবার চেষ্টা করুন।
+          </p>
+        </div>
+      )}
 
-            <label className="search-box">
-              <span>⌕</span>
-              <input
-                aria-label="পণ্য খুঁজুন"
-                placeholder="পণ্যের নাম লিখুন..."
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-              />
-            </label>
-          </div>
+      <section
+        id="দাম-বাড়ছে"
+        className="mx-auto max-w-7xl px-4 py-12 sm:px-6 lg:px-8"
+      >
+        <p className="text-sm font-semibold text-red-600">▲ ঊর্ধ্বমুখী দাম</p>
+        <h2 className="mt-2 text-2xl font-extrabold sm:text-3xl">
+          যেসব পণ্যের দাম বাড়ছে
+        </h2>
 
-          <div className="product-filter-row">
-            <div className="filter-chips">
-              {categories.map((item) => (
-                <button
-                  className={`filter-chip ${
-                    category === item ? "filter-active" : ""
-                  }`}
-                  key={item}
-                  onClick={() => setCategory(item)}
-                  type="button"
-                >
-                  {item}
-                </button>
-              ))}
-            </div>
-            <span className="product-count">
-              {bn(visibleProducts.length)}টি পণ্য
-            </span>
-          </div>
-
-          {loading && (
-            <p className="data-note">বাজারদরের তথ্য লোড হচ্ছে...</p>
+        <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {loading ? (
+            Array.from({ length: 3 }).map((_, index) => (
+              <ProductSkeleton key={index} />
+            ))
+          ) : risingProducts.length ? (
+            risingProducts.map((product) => (
+              <ProductCard key={product.id} product={product} />
+            ))
+          ) : (
+            <p className="rounded-2xl border bg-white p-6 text-gray-500">
+              দাম বাড়ার তথ্য পাওয়া যায়নি।
+            </p>
           )}
+        </div>
+      </section>
 
-          <div className="products-grid">
-            {visibleProducts.map((product) => (
-              <article className="product-card" key={product.id}>
-                <div className="product-visual">
-                  <span>{product.emoji}</span>
-                  <span className="product-category">{product.category}</span>
-                </div>
+      <section id="দাম-কমছে" className="bg-emerald-50/70">
+        <div className="mx-auto max-w-7xl px-4 py-12 sm:px-6 lg:px-8">
+          <p className="text-sm font-semibold text-emerald-700">
+            ▼ নিম্নমুখী দাম
+          </p>
+          <h2 className="mt-2 text-2xl font-extrabold sm:text-3xl">
+            যেসব পণ্যের দাম কমছে
+          </h2>
 
-                <div className="product-info">
-                  <h3>{product.name}</h3>
-                  <p className="unit-label">প্রতি {product.unit}</p>
+          <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {loading ? (
+              Array.from({ length: 3 }).map((_, index) => (
+                <ProductSkeleton key={index} />
+              ))
+            ) : fallingProducts.length ? (
+              fallingProducts.map((product) => (
+                <ProductCard key={product.id} product={product} />
+              ))
+            ) : (
+              <p className="rounded-2xl border bg-white p-6 text-gray-500">
+                দাম কমার তথ্য পাওয়া যায়নি।
+              </p>
+            )}
+          </div>
+        </div>
+      </section>
 
-                  <div className="price-row">
-                    <p className="price">৳{bn(product.price)}</p>
-
-                    {product.change > 0 ? (
-                      <span className="change up">
-                        ↑ {bn(product.change)}%
-                      </span>
-                    ) : product.change < 0 ? (
-                      <span className="change down">
-                        ↓ {bn(Math.abs(product.change))}%
-                      </span>
-                    ) : (
-                      <span className="change stable">— স্থির</span>
-                    )}
-                  </div>
-                </div>
-              </article>
-            ))}
+      <section
+        id="সব-পণ্য"
+        className="mx-auto max-w-7xl px-4 py-14 sm:px-6 lg:px-8"
+      >
+        <div className="flex flex-wrap items-end justify-between gap-4">
+          <div>
+            <p className="text-sm font-semibold text-emerald-700">
+              🛍️ পণ্যের তালিকা
+            </p>
+            <h2 className="mt-2 text-2xl font-extrabold sm:text-3xl">
+              সব নিত্যপ্রয়োজনীয় পণ্য
+            </h2>
+            <p className="mt-2 text-sm text-gray-500">
+              পণ্য খুঁজুন এবং দাম তুলনা করুন
+            </p>
           </div>
 
-          {visibleProducts.length === 0 && (
-            <div className="empty-state">
-              <span>🔎</span>
-              <h3>কোনো পণ্য পাওয়া যায়নি</h3>
-              <p>অন্য নাম বা ক্যাটাগরি দিয়ে খুঁজে দেখুন।</p>
+          <span className="rounded-full bg-emerald-100 px-4 py-2 text-sm font-semibold text-emerald-800">
+            {loading
+              ? "লোড হচ্ছে..."
+              : bnNumber(filteredProducts.length) + "টি পণ্য"}
+          </span>
+        </div>
+
+        <div className="mt-7 grid grid-cols-1 gap-3 sm:grid-cols-[1fr_220px]">
+          <input
+            type="search"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="পণ্যের নাম লিখে খুঁজুন..."
+            className="w-full rounded-xl border border-gray-200 bg-white px-4 py-3 outline-none focus:border-emerald-500"
+          />
+
+          <select
+            value={sort}
+            onChange={(event) => setSort(event.target.value)}
+            aria-label="পণ্যের দাম অনুযায়ী সাজান"
+            className="rounded-xl border border-gray-200 bg-white px-4 py-3"
+          >
+            <option value="default">ডিফল্ট সাজানো</option>
+            <option value="low">দাম: কম থেকে বেশি</option>
+            <option value="high">দাম: বেশি থেকে কম</option>
+            <option value="change">দাম বৃদ্ধির হার</option>
+          </select>
+        </div>
+
+        <div className="mt-5 flex gap-2 overflow-x-auto pb-2">
+          {CATEGORIES.map((category) => (
+            <button
+              key={category.id}
+              type="button"
+              onClick={() => setActiveCategory(category.id)}
+              className={
+                "shrink-0 rounded-full border px-4 py-2 text-sm font-medium " +
+                (activeCategory === category.id
+                  ? "border-emerald-700 bg-emerald-700 text-white"
+                  : "border-gray-200 bg-white text-gray-700 hover:border-emerald-400")
+              }
+            >
+              {category.icon} {category.name}
+            </button>
+          ))}
+        </div>
+
+        <div className="mt-7 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          {loading ? (
+            Array.from({ length: 8 }).map((_, index) => (
+              <ProductSkeleton key={index} />
+            ))
+          ) : filteredProducts.length ? (
+            filteredProducts.map((product) => (
+              <ProductCard key={product.id} product={product} />
+            ))
+          ) : (
+            <div className="rounded-2xl border border-dashed bg-white p-10 text-center sm:col-span-2 lg:col-span-3 xl:col-span-4">
+              <h3 className="text-xl font-bold">কোনো পণ্য পাওয়া যায়নি</h3>
+              <p className="mt-2 text-sm text-gray-500">
+                অন্য নাম দিয়ে খুঁজুন অথবা অন্য ক্যাটাগরি বেছে নিন।
+              </p>
               <button
-                className="button"
+                type="button"
                 onClick={() => {
                   setSearch("");
-                  setCategory("সব পণ্য");
+                  setActiveCategory("all");
+                  setSort("default");
                 }}
-                type="button"
+                className="mt-5 rounded-xl bg-emerald-700 px-5 py-3 font-semibold text-white"
               >
                 সব পণ্য দেখুন
               </button>
             </div>
           )}
-
-          <div className="products-bottom">
-            <span>আপনার দৈনন্দিন বাজার, আরও সহজে।</span>
-            <a
-              href="#"
-              onClick={(event) => {
-                event.preventDefault();
-                window.scrollTo({ top: 0, behavior: "smooth" });
-              }}
-            >
-              উপরে ফিরে যান ↑
-            </a>
-          </div>
         </div>
       </section>
 
-      <section className="cta-section" id="about">
-        <div className="container cta-card">
+      <footer className="bg-gray-950 text-white">
+        <div className="mx-auto flex max-w-7xl flex-col gap-5 px-4 py-9 sm:px-6 md:flex-row md:items-center md:justify-between lg:px-8">
           <div>
-            <p className="section-kicker">বাজার করুন বুদ্ধিমত্তার সঙ্গে</p>
-            <h2>
-              দাম জেনে কিনুন,
-              <br />
-              সাশ্রয় করুন প্রতিদিন।
-            </h2>
-            <p>
-              সঠিক তথ্যের মাধ্যমে আপনার বাজারের পরিকল্পনা হোক আরও সহজ।
-            </p>
-          </div>
-          <a className="button button-light" href="#products">
-            বাজারদর দেখুন ↗
-          </a>
-        </div>
-      </section>
-
-      <footer className="footer">
-        <div className="container footer-main">
-          <div className="footer-brand">
-            <a className="brand" href="#">
-              <span className="brand-mark">ব</span>
-              <span className="brand-name">
-                বাজার<span>দর</span>
-              </span>
-            </a>
-            <p>
-              প্রতিদিনের বাজারদর জানুন সহজে।
-              <br />
-              সঠিক তথ্য, সাশ্রয়ী কেনাকাটা।
+            <Link
+              href="/"
+              className="flex items-center gap-2 text-xl font-extrabold"
+            >
+              <img
+                src="/logo-icon.png"
+                alt=""
+                className="h-8 w-8 object-contain"
+              />
+              বাজার দর
+            </Link>
+            <p className="mt-2 text-sm text-gray-300">
+              বাজার দর — প্রয়োজনীয় পণ্যের দাম এক নজরে।
             </p>
           </div>
 
-          <div className="footer-links">
-            <h4>দ্রুত লিংক</h4>
-            <a href="#">হোম</a>
-            <a href="#products">বাজারদর</a>
-            <a href="#trends">দামের পরিবর্তন</a>
-          </div>
-
-          <div className="footer-links">
-            <h4>আমাদের লক্ষ্য</h4>
+          <div className="max-w-xl text-sm leading-6 text-gray-400 md:text-right">
             <p>
-              বাজারের তথ্য সহজলভ্য করা এবং সচেতন কেনাকাটায় সহায়তা করা।
+              সকল দাম সম্ভাব্য; বাজার অবস্থার ওপর নির্ভর করে পরিবর্তিত হয়।
+              কেনার আগে স্থানীয় বাজারে দাম যাচাই করুন।
+            </p>
+            <p className="mt-2">
+              © {currentYear || "২০২৬"} বাজার দর। সর্বস্বত্ব সংরক্ষিত।
             </p>
           </div>
-
-          <div className="footer-contact">
-            <span className="footer-leaf">✳</span>
-            <h4>বাজার থাকুক হাতের মুঠোয়</h4>
-            <p>প্রতিদিন ফিরে আসুন নতুন বাজারদরের খোঁজে।</p>
-          </div>
-        </div>
-
-        <div className="container footer-bottom">
-          <span>© বাজার দর। সর্বস্বত্ব সংরক্ষিত।</span>
-          <span>বাংলাদেশের বাজারের জন্য ভালোবাসা দিয়ে তৈরি ♥</span>
         </div>
       </footer>
     </main>
