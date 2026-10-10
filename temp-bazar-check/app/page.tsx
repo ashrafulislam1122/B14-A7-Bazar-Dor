@@ -47,7 +47,7 @@ type Product = {
 };
 
 const API_URL =
-  "https://api.api-store.workers.dev/api/bazardor/products";
+  "https://openapi.programming-hero.com/api/bazardor/products";
 
 const CATEGORIES = [
   { id: "all", name: "সব পণ্য", icon: "🛒" },
